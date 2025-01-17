@@ -5,7 +5,7 @@ rng(1001);
 Ngene_df = readtable('C:\\Users\\Emma\\OneDrive - purdue.edu\\Desktop\\RA Fall 2023\\SHC\\NgeneSim.csv');
 
 % Parameters
-b_0 = -0.5;     %% change? 
+b_0 = -0.5;    
 b_BL = 0.6;   
 b_price = -0.05; 
 alpha_0 = 0; 
@@ -79,6 +79,7 @@ cons = zeros(height(Ngene_df), 1);
 share = splitapply(@mean, D, permit_dummy);
 % Add the share column back to the dataset
 Ngene_df.share = share(permit_dummy);
+%% 
 
 % estimate logit model
 logit_model = glmfit(X, D, 'binomial', 'link', 'logit');
@@ -123,7 +124,7 @@ disp(['θhat_0: ', num2str(theta_hat)]);
 beta_hat = [alpha_0; alpha_1; alpha_2; alpha_3; alpha_4; alpha_5; gamma_0; mu; phi_0; gamma_1; phi_1];
 variable_matrix = [W_simulated, BL, price, q_simulated, bZ_simulated, qZ_simulated];
 C = chol(covariance_matrix, 'lower');
-N_sim = 5000; % number of simulations
+N_sim = 5; % number of simulations
 K = length(beta_hat); % number of params
 xK = randn(K, N_sim);
 beta_hat = repmat(beta_hat, 1, N_sim);
@@ -136,8 +137,13 @@ sigma_matrices = zeros(length(b_values), length(Q_values), N_sim);
 pi_ij_matrices = zeros(N_j, length(b_values), length(Q_values), N_sim);
 
 %% 
+% Initialize Parallel Pool
 parpool(4);
 
+% Preallocate a 3D array for storing sigma matrices
+sigma_matrices = zeros(length(b_values), length(Q_values), N_sim);
+
+% Parallel Simulation
 parfor s = 1:N_sim
     beta_hat = [alpha_0; alpha_1; alpha_2; alpha_3; alpha_4; alpha_5; gamma_0; mu; phi_0; gamma_1; phi_1];
 
@@ -153,6 +159,7 @@ parfor s = 1:N_sim
     gamma_1_sim = beta_d(10, s);
     phi_1_sim = beta_d(11, s);
  
+    % Initialize local_sigma_matrix as a 2D array
     local_sigma_matrix = zeros(length(b_values), length(Q_values));
    
     % Calculate sigmas for each combination of b & q
@@ -161,15 +168,22 @@ parfor s = 1:N_sim
             b_i = b_values(i);
             Q_j = Q_values(j);
 
-            local_sigma_matrix(i, j, s) = calculate_sigma(alpha_0_sim, alpha_1_sim, alpha_2_sim, alpha_3_sim, alpha_4_sim, alpha_5_sim, ...
-                                  gamma_0_sim, gamma_1_sim, mu_sim, phi_0_sim, phi_1_sim, theta_hat, ...
-                                  W_simulated, Z_simulated, BL, q_simulated, price, N_j);
+            % Store the result of calculate_sigma in the 2D local matrix
+            local_sigma_matrix(i, j) = calculate_sigma(alpha_0_sim, alpha_1_sim, alpha_2_sim, ...
+                                                        alpha_3_sim, alpha_4_sim, alpha_5_sim, ...
+                                                        gamma_0_sim, gamma_1_sim, mu_sim, ...
+                                                        phi_0_sim, phi_1_sim, theta_hat, ...
+                                                        W_simulated, Z_simulated, BL, ...
+                                                        q_simulated, price, N_j);
         end
     end
-    sigma_matrices(:,:,s) = local_sigma_matrix; % Store results in sigma_matrices 
+
+    % Store the results for this simulation in sigma_matrices
+    sigma_matrices(:,:,s) = local_sigma_matrix; 
 end
 
-delete(gcp('nocreate'));   % Close the parallel pool
+% Close the parallel pool
+delete(gcp('nocreate'));
 
 
 %% 
