@@ -109,11 +109,15 @@ b_values = [1, 2, 3];
 Q_values = [1100,1200]; 
 N_j = num_samples; 
 
-sigma_matrices = zeros(length(b_values), length(Q_values), N_sim);
-
 parpool(4);
 tic
+sigma_matrices = zeros(length(b_values), length(Q_values), N_sim);
+dsigma_dq_values = zeros(length(b_values), length(Q_values) - 1, N_sim);
+dS_dq_values = zeros(N_j, length(b_values), length(Q_values) - 1, N_sim);
+
 parfor s = 1:N_sim
+
+    % PARAMS %
     alpha_0_sim = beta_d(1, s);
     alpha_1_sim = beta_d(2, s);
     alpha_2_sim = beta_d(3, s);
@@ -126,8 +130,12 @@ parfor s = 1:N_sim
     gamma_1_sim = beta_d(10, s);
     phi_1_sim   = beta_d(11, s);
     
+    % MATRICES %
     local_sigma_matrix = zeros(length(b_values), length(Q_values));
-    % Loop over combinations of b and Q values
+    local_dsigma_dq = zeros(length(b_values), length(Q_values) - 1);
+    local_dS_dq = zeros(N_j, length(b_values), length(Q_values) - 1);
+
+    % SIGMAS %
     for i = 1:length(b_values)
         for j = 1:length(Q_values)
             BL_val = b_values(i);
@@ -135,7 +143,9 @@ parfor s = 1:N_sim
             diff = 1;
             sigma_local = 0.1;  % initial guess
             k = 0.6;
-            while diff >= 1e-6
+            iter = 0;
+            max_iter = 100;
+            while diff >= 1e-6 && iter < max_iter
                 pi_ij = 1 ./ (1 + exp( alpha_1_sim * W_simulated(:,1) + alpha_2_sim * W_simulated(:,2) + ...
                            alpha_3_sim * W_simulated(:,3) + alpha_4_sim * W_simulated(:,4) + ...
                            alpha_5_sim * W_simulated(:,5)) + theta_hat * sigma_local + ...
@@ -144,44 +154,48 @@ parfor s = 1:N_sim
                 sigma_new = sum(pi_ij)/N_j * (1 - k) + k * sigma_local;
                 diff = max(abs(sigma_local - sigma_new));
                 sigma_local = sigma_new;
+                iter = iter + 1;
             end
             local_sigma_matrix(i, j) = sigma_local;
         end
     end
-    sigma_matrices(:,:,s) = local_sigma_matrix;
+   
+% dsigma/dq % 
+    for i = 1:length(b_values)
+        for j = 1:(length(Q_values)-1)
+            local_dsigma_dq(i, j) = (local_sigma_matrix(i, j + 1) - local_sigma_matrix(i, j)) /(Q_values(j + 1) - Q_values(j));
+        end
+    end
+
+% ds/dq % 
+for i = 1:length(b_values)
+        for j = 1:(length(Q_values) - 1)
+            local_dS_dq(:, i, j) = (1 / mu_sim) * ((phi_0_sim + phi_1_sim * Z_simulated) + theta_hat * local_dsigma_dq(i, j));
+        end
 end
+
+ % Store results %
+    sigma_matrices(:,:,s) = local_sigma_matrix;
+    dsigma_dq_values(:,:,s) = local_dsigma_dq;
+    dS_dq_values(:,:,:,s) = local_dS_dq;
+
+end
+
 toc
 delete(gcp('nocreate'));
-dsigma_dq_values = zeros(length(b_values), length(Q_values)-1, N_sim);
-for s = 1:N_sim
-    sigma_matrix = sigma_matrices(:,:,s);
-    for i = 1:length(b_values)
-        for j = 1:(length(Q_values)-1)
-            dsigma_dq_values(i,j,s) = (sigma_matrix(i, j+1) - sigma_matrix(i, j)) / (Q_values(j+1) - Q_values(j));
-        end
-    end
-end
-
-dS_dq_values = zeros(N_j, length(b_values), length(Q_values)-1, N_sim);
-for s = 1:N_sim
-    for i = 1:length(b_values)
-        for j = 1:(length(Q_values)-1)
-            dS_dq_values(:, i, j, s) = (1 / mu) * ((phi_0 + phi_1 * Z_simulated) + theta_hat * dsigma_dq_values(i,j,s));
-        end
-    end
-end
-
-sorted_dS_dq_values = sort(dS_dq_values, 1);
+%% CONFIDENCE INTERVALS & SUMMARY STATISTICS USING KIRINSKY & ROBB
+sorted_dS_dq_values = sort(dS_dq_values, 4); % Sort along simulations (4th dim)
 CI_dS_dq = zeros(2, length(Q_values)-1);
 stats_dS_dq = zeros(3, length(Q_values)-1);
 
 for j = 1:(length(Q_values)-1)
-    vals = sorted_dS_dq_values(:, :, j, :);
-    vals = vals(:);
-    CI_dS_dq(:, j) = prctile(vals, [2.5, 97.5]);
-    stats_dS_dq(1, j) = mean(vals);
-    stats_dS_dq(2, j) = prctile(vals, 25);
-    stats_dS_dq(3, j) = prctile(vals, 75);
+    vals = sorted_dS_dq_values(:, :, j, :); % Extract across simulations
+    vals = vals(:); 
+    % Compute Confidence Intervals and Summary Stats
+    CI_dS_dq(:, j) = prctile(vals, [2.5, 97.5]); % 95% CI
+    stats_dS_dq(1, j) = mean(vals);   % Mean
+    stats_dS_dq(2, j) = prctile(vals, 25); % 25th percentile
+    stats_dS_dq(3, j) = prctile(vals, 75); % 75th percentile
 end
 
 %% DISPLAY RESULTS
