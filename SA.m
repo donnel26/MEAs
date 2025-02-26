@@ -39,7 +39,8 @@ for i = 1:num_choices
 end  
 
 % Simulate q data 
-q_simulated = randi([0, 1], num_samples, 1) * 100 + 1100;
+q_simulated = randi([0, 1], num_samples, 1) * 10000;
+
 
 % Calculate interactions
 bZ_simulated = BL .* Z_simulated; % BL * Z
@@ -99,14 +100,15 @@ theta_hat = constant / sigma;
 
 beta_hat = [alpha_0; alpha_1; alpha_2; alpha_3; alpha_4; alpha_5; gamma_0; mu; phi_0; gamma_1; phi_1];
 C = chol(covariance_matrix, 'lower');
-N_sim = 10; % number of simulations
+N_sim = 5000; % number of simulations
 K = length(beta_hat); 
 xK = randn(K, N_sim);
 beta_hat_sim = repmat(beta_hat, 1, N_sim);
 beta_d = beta_hat_sim + C * xK;
 
 b_values = [1, 2, 3];
-Q_values = [1100,1200]; 
+
+Q_values = [0, 10000];
 N_j = num_samples; 
 
 parpool(4);
@@ -114,9 +116,11 @@ tic
 sigma_matrices = zeros(length(b_values), length(Q_values), N_sim);
 dsigma_dq_values = zeros(length(b_values), length(Q_values) - 1, N_sim);
 dS_dq_values = zeros(N_j, length(b_values), length(Q_values) - 1, N_sim);
-
+update_interval = 10; % Print update every 10 iterations
 parfor s = 1:N_sim
-
+ iter_tic = tic; % Start timing the iteration
+ task = getCurrentTask(); % Get worker info
+ workerID = task.ID; % Worker ID (only works inside parfor)
     % PARAMS %
     alpha_0_sim = beta_d(1, s);
     alpha_1_sim = beta_d(2, s);
@@ -155,8 +159,13 @@ parfor s = 1:N_sim
                 diff = max(abs(sigma_local - sigma_new));
                 sigma_local = sigma_new;
                 iter = iter + 1;
+                  % Print update every `update_interval` iterations
+                if mod(iter, update_interval) == 0 || iter == 1
+                    fprintf('Worker %d: Simulation %d, (i=%d, j=%d) - Iteration %d/%d\n', ...
+                        workerID, s, i, j, iter, max_iter);
+                end
             end
-            local_sigma_matrix(i, j) = sigma_local;
+           local_sigma_matrix(i, j) = sigma_local;
         end
     end
    
@@ -178,7 +187,8 @@ end
     sigma_matrices(:,:,s) = local_sigma_matrix;
     dsigma_dq_values(:,:,s) = local_dsigma_dq;
     dS_dq_values(:,:,:,s) = local_dS_dq;
-
+% Print progress update
+    fprintf('Worker %d: Simulation %d/%d completed in %.2f seconds.\n', workerID, s, N_sim, toc(iter_tic));
 end
 
 toc
